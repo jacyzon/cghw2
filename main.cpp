@@ -1,3 +1,5 @@
+#define GLM_FORCE_RADIANS
+
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #include <iostream>
@@ -8,19 +10,29 @@
 #include <vector>
 #include <tiny_obj_loader.h>
 
-struct object_struct {
+typedef struct obj {
     unsigned int program;
     unsigned int vao;
     unsigned int vbo[4];
     unsigned int texture;
+
+    glm::vec3 origin;
+    glm::mat4 translation;
+    glm::mat4 rotation;
+    glm::mat4 base_model;
     glm::mat4 model;
 
-    object_struct() : model(glm::mat4(1.0f)) { }
-};
+    obj() :
+            origin(glm::vec3()),
+            model(glm::mat4(1.0f)),
+            base_model(glm::mat4(1.0f)),
+            rotation(glm::mat4()),
+            translation(glm::mat4()) { }
+} object_struct;
 
+unsigned int sun_index, earth_index;
 std::vector<object_struct> objects; // vertex array object,vertex buffer object and texture(color) for objs
-unsigned int program, program2;
-std::vector<int> indicesCount; // number of indice of objs
+std::vector<int> indicesCount;      // number of indices of objects
 
 static void error_callback(int error, const char *description) {
     fputs(description, stderr);
@@ -56,6 +68,7 @@ static unsigned int setup_shader(const char *vertex_shader, const char *fragment
         return 0;
     }
 
+    //create a shader object and set shader type to run on a programmable fragment processor
     GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);
     glShaderSource(fs, 1, (const GLchar **) &fragment_shader, nullptr);
     glCompileShader(fs);
@@ -145,7 +158,7 @@ static unsigned char *load_bmp(const char *bmp, unsigned int *width, unsigned in
     return result;
 }
 
-static int add_obj(unsigned int program, const char *filename, const char *texbmp) {
+static unsigned int add_obj(unsigned int program, const char *filename, const char *texbmp) {
     object_struct new_node;
 
     std::vector<tinyobj::shape_t> shapes;
@@ -213,7 +226,7 @@ static int add_obj(unsigned int program, const char *filename, const char *texbm
     new_node.program = program;
 
     objects.push_back(new_node);
-    return objects.size() - 1;
+    return (unsigned int) (objects.size() - 1);
 }
 
 static void releaseObjects() {
@@ -227,7 +240,7 @@ static void releaseObjects() {
 
 static void setUniformMat4(unsigned int program, const std::string &name, const glm::mat4 &mat) {
     // This line can be ignore. But, if you have multiple shader program
-    // You must check if currect binding is the one you want
+    // You must check if current binding is the one you want
     glUseProgram(program);
     GLint loc = glGetUniformLocation(program, name.c_str());
     if (loc == -1) return;
@@ -243,10 +256,52 @@ static void render() {
         glUseProgram(objects[i].program);
         glBindVertexArray(objects[i].vao);
         glBindTexture(GL_TEXTURE_2D, objects[i].texture);
-        //you should send some data to shader here
+        // you should send some data to shader here
         glDrawElements(GL_TRIANGLES, indicesCount[i], GL_UNSIGNED_INT, nullptr);
+        setUniformMat4(objects[i].program, "vp", objects[i].model);
     }
     glBindVertexArray(0);
+}
+
+glm::mat4 buildTransform(object_struct obj) {
+    return obj.base_model *
+           glm::translate(glm::mat4(), obj.origin) *
+           obj.translation *
+           obj.rotation;
+}
+
+void rotateObject() {
+    static float angle = 0;
+    angle += 0.1f;
+    if (angle == 360) angle = 0;
+    float orbit = (angle * 3 * 3.14f / 180);
+
+    // sun
+    objects[sun_index].rotation = glm::rotate(glm::mat4(), angle / 8, glm::vec3(0.0f, 0.0f, 1.0f));
+    objects[sun_index].model = buildTransform(objects[sun_index]);
+
+
+    // earth
+    objects[earth_index].translation =
+            glm::translate(glm::mat4(), glm::vec3(0.0f, 0.0f, 0.0f)) *
+            glm::translate(glm::mat4(), glm::vec3(cos(orbit) * 25, 0.0f, sin(orbit) * 25));
+    objects[earth_index].rotation = glm::rotate(glm::mat4(), angle * 3, glm::vec3(0.0f, 0.0f, 1.0f));
+    objects[earth_index].model = buildTransform(objects[earth_index]);
+}
+
+void setupObjects() {
+    // base transform: sun
+    objects[sun_index].base_model =
+            glm::perspective(glm::radians(45.0f), 640.0f / 480, 1.0f, 120.f) *
+            glm::lookAt(glm::vec3(50.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0, 1, 0));
+    objects[sun_index].origin = glm::vec3(0.0f, 0.0f, 0.0f);
+
+    // base transform: earth
+    objects[earth_index].base_model =
+            glm::perspective(glm::radians(45.0f), 640.0f / 480, 1.0f, 120.f) *
+            glm::lookAt(glm::vec3(50.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0, 1, 0));
+    objects[earth_index].origin = objects[sun_index].origin;
+
 }
 
 int main(int argc, char *argv[]) {
@@ -266,6 +321,7 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
+    // Make our window context the main context on current thread
     glfwMakeContextCurrent(window);
 
     // This line MUST put below glfwMakeContextCurrent
@@ -278,40 +334,35 @@ int main(int argc, char *argv[]) {
     // Setup input callback
     glfwSetKeyCallback(window, key_callback);
 
-    // load shader program
-    program = setup_shader(readfile("shader/vs.txt").c_str(), readfile("shader/fs.txt").c_str());
-    program2 = setup_shader(readfile("shader/vs.txt").c_str(), readfile("shader/fs.txt").c_str());
+    // load shader sun_program
+    unsigned int sun_program = setup_shader(readfile("shader/vs.txt").c_str(), readfile("shader/fs.txt").c_str());
+    unsigned int earth_program = setup_shader(readfile("shader/vs.txt").c_str(), readfile("shader/fs.txt").c_str());
 
-    int sun = add_obj(program, "render/sun.obj", "render/sun.bmp");
-    int earth = add_obj(program, "render/earth.obj", "render/earth.bmp");
+    sun_index = add_obj(sun_program, "render/sun.obj", "render/sun.bmp");
+    earth_index = add_obj(earth_program, "render/earth.obj", "render/earth.bmp");
+
+    // Enable blend mode for billboard
+//    glEnable(GL_BLEND);
+//    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     glEnable(GL_DEPTH_TEST);
     glCullFace(GL_BACK);
-    // Enable blend mode for billboard
-    //glEnable(GL_BLEND);
-    //glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    setUniformMat4(program, "vp", glm::perspective(glm::radians(45.0f), 640.0f / 480, 1.0f, 100.f) *
-                                  glm::lookAt(glm::vec3(20.0f), glm::vec3(), glm::vec3(0, 1, 0)) * glm::mat4(1.0f));
-    setUniformMat4(program2, "vp", glm::mat4(1.0));
-    glm::mat4 tl = glm::translate(glm::mat4(), glm::vec3(15.0f, 0.0f, 0.0));
-    glm::mat4 rot;
-    glm::mat4 rev;
+    setupObjects();
 
-    float last, start;
-    last = start = glfwGetTime();
+    float last;
+    last = (float) glfwGetTime();
     int fps = 0;
-    objects[sun].model = glm::scale(glm::mat4(1.0f), glm::vec3(0.85f));
-    while (!glfwWindowShouldClose(window)) {//program will keep draw here until you close the window
-        float delta = glfwGetTime() - start;
+    while (!glfwWindowShouldClose(window)) {//sun_program will keep draw here until you close the window
         render();
         glfwSwapBuffers(window);
         glfwPollEvents();
         fps++;
-        if (glfwGetTime() - last > 1.0) {
+        if (glfwGetTime() - last > 0.01) {
+            rotateObject();
             std::cout << (double) fps / (glfwGetTime() - last) << std::endl;
             fps = 0;
-            last = glfwGetTime();
+            last = (float) glfwGetTime();
         }
     }
 
