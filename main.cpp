@@ -16,21 +16,20 @@ typedef struct obj {
     unsigned int vbo[4];
     unsigned int texture;
 
-    glm::vec3 origin;
+    glm::mat4 origin;
     glm::mat4 translation;
     glm::mat4 rotation;
     glm::mat4 base_model;
     glm::mat4 model;
 
-    obj() :
-            origin(glm::vec3()),
+    obj() : origin(glm::mat4()),
             model(glm::mat4(1.0f)),
             base_model(glm::mat4(1.0f)),
             rotation(glm::mat4()),
             translation(glm::mat4()) { }
 } object_struct;
 
-unsigned int sun_index, earth_index;
+unsigned int sun_index, earth_index, moon_index;
 std::vector<object_struct> objects; // vertex array object,vertex buffer object and texture(color) for objs
 std::vector<int> indicesCount;      // number of indices of objects
 
@@ -265,14 +264,14 @@ static void render() {
 
 glm::mat4 buildTransform(object_struct obj) {
     return obj.base_model *
-           glm::translate(glm::mat4(), obj.origin) *
+           obj.origin *
            obj.translation *
            obj.rotation;
 }
 
 void rotateObject() {
     static float angle = 0;
-    angle += 0.1f;
+    angle += 0.2f;
     if (angle == 360) angle = 0;
     float orbit = (angle * 3 * 3.14f / 180);
 
@@ -280,28 +279,46 @@ void rotateObject() {
     objects[sun_index].rotation = glm::rotate(glm::mat4(), angle / 8, glm::vec3(0.0f, 0.0f, 1.0f));
     objects[sun_index].model = buildTransform(objects[sun_index]);
 
-
     // earth
     objects[earth_index].translation =
-            glm::translate(glm::mat4(), glm::vec3(0.0f, 0.0f, 0.0f)) *
-            glm::translate(glm::mat4(), glm::vec3(cos(orbit) * 25, 0.0f, sin(orbit) * 25));
+            glm::translate(glm::mat4(), glm::vec3(cos(orbit) * 30, 0.0f, sin(-orbit) * 50));
     objects[earth_index].rotation = glm::rotate(glm::mat4(), angle * 3, glm::vec3(0.0f, 0.0f, 1.0f));
     objects[earth_index].model = buildTransform(objects[earth_index]);
+
+    // moon
+    objects[moon_index].origin = objects[earth_index].translation;
+    objects[moon_index].translation =
+            glm::translate(glm::mat4(), glm::vec3(cos(orbit * 3) * 10, 0.0f, sin(-orbit * 3) * 8));
+    objects[moon_index].rotation = glm::rotate(glm::mat4(), angle * 3 * (30.0f / 27), glm::vec3(0.0f, 0.0f, 1.0f));
+    objects[moon_index].model = buildTransform(objects[moon_index]);
 }
 
 void setupObjects() {
+    // load shader sun_program
+    unsigned int sun_program = setup_shader(readfile("shader/vs.txt").c_str(), readfile("shader/fs.txt").c_str());
+    unsigned int earth_program = setup_shader(readfile("shader/vs.txt").c_str(), readfile("shader/fs.txt").c_str());
+    unsigned int moon_program = setup_shader(readfile("shader/vs.txt").c_str(), readfile("shader/fs.txt").c_str());
+
+    sun_index = add_obj(sun_program, "render/sun.obj", "render/sun.bmp");
+    earth_index = add_obj(earth_program, "render/earth.obj", "render/earth.bmp");
+    moon_index = add_obj(moon_program, "render/earth.obj", "render/moon.bmp");
+
     // base transform: sun
     objects[sun_index].base_model =
-            glm::perspective(glm::radians(45.0f), 640.0f / 480, 1.0f, 120.f) *
-            glm::lookAt(glm::vec3(50.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0, 1, 0));
-    objects[sun_index].origin = glm::vec3(0.0f, 0.0f, 0.0f);
+            glm::perspective(glm::radians(45.0f), 640.0f / 480, 1.0f, 170.f) *
+            glm::lookAt(glm::vec3(1.0f, 110.0f, 1.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0, 1, 0));
+    objects[sun_index].origin = glm::translate(glm::mat4(), glm::vec3(0.0f, 0.0f, 0.0f));
 
     // base transform: earth
     objects[earth_index].base_model =
-            glm::perspective(glm::radians(45.0f), 640.0f / 480, 1.0f, 120.f) *
-            glm::lookAt(glm::vec3(50.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0, 1, 0));
+            glm::perspective(glm::radians(45.0f), 640.0f / 480, 1.0f, 170.f) *
+            glm::lookAt(glm::vec3(1.0f, 110.0f, 1.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0, 1, 0));
     objects[earth_index].origin = objects[sun_index].origin;
 
+    // base transform: moon
+    objects[moon_index].base_model =
+            glm::perspective(glm::radians(45.0f), 640.0f / 480, 1.0f, 170.f) *
+            glm::lookAt(glm::vec3(1.0f, 110.0f, 1.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0, 1, 0));
 }
 
 int main(int argc, char *argv[]) {
@@ -333,13 +350,6 @@ int main(int argc, char *argv[]) {
 
     // Setup input callback
     glfwSetKeyCallback(window, key_callback);
-
-    // load shader sun_program
-    unsigned int sun_program = setup_shader(readfile("shader/vs.txt").c_str(), readfile("shader/fs.txt").c_str());
-    unsigned int earth_program = setup_shader(readfile("shader/vs.txt").c_str(), readfile("shader/fs.txt").c_str());
-
-    sun_index = add_obj(sun_program, "render/sun.obj", "render/sun.bmp");
-    earth_index = add_obj(earth_program, "render/earth.obj", "render/earth.bmp");
 
     // Enable blend mode for billboard
 //    glEnable(GL_BLEND);
