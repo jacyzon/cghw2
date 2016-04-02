@@ -1,5 +1,3 @@
-#define GLM_FORCE_RADIANS
-
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #include <iostream>
@@ -13,8 +11,9 @@
 typedef struct obj {
     unsigned int program;
     unsigned int vao;
-    unsigned int vbo[4];
+    unsigned int vbo[4]; // position, texture coord, normal, element
     unsigned int texture;
+    unsigned int indices;
 
     // transform
     glm::mat4 origin;
@@ -31,22 +30,21 @@ typedef struct obj {
 } object_struct;
 
 unsigned int sun_index, earth_index, moon_index; // program index
-std::vector<object_struct> objects; // vertex array object,vertex buffer object and texture(color) for objs
-std::vector<int> indicesCount;      // number of indices of objects
+std::vector<object_struct> objects; // vertex array object,vertex buffer object and texture(color) for objects
 
 static void error_callback(int error, const char *description) {
     fputs(description, stderr);
 }
 
 static void key_callback(GLFWwindow *window, int key, int scancode, int action, int mods) {
+    // exit program when esc pressed
     if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
         glfwSetWindowShouldClose(window, GL_TRUE);
 }
 
 static unsigned int setup_shader(const char *vertex_shader, const char *fragment_shader) {
     GLuint vs = glCreateShader(GL_VERTEX_SHADER);
-    glShaderSource(vs, 1, (const GLchar **) &vertex_shader, nullptr);
-
+    glShaderSource(vs, 1, &vertex_shader, nullptr);
     glCompileShader(vs);
 
     int status, maxLength;
@@ -68,11 +66,12 @@ static unsigned int setup_shader(const char *vertex_shader, const char *fragment
         return 0;
     }
 
-    //create a shader object and set shader type to run on a programmable fragment processor
+    // create a shader object and set shader type to run on a programmable fragment processor
     GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);
-    glShaderSource(fs, 1, (const GLchar **) &fragment_shader, nullptr);
+    glShaderSource(fs, 1, &fragment_shader, nullptr);
     glCompileShader(fs);
 
+    // check if the shader created successfully
     glGetShaderiv(fs, GL_COMPILE_STATUS, &status);
     if (status == GL_FALSE) {
         glGetShaderiv(fs, GL_INFO_LOG_LENGTH, &maxLength);
@@ -91,12 +90,14 @@ static unsigned int setup_shader(const char *vertex_shader, const char *fragment
     }
 
     unsigned int program = glCreateProgram();
-    // Attach our shaders to our program
+
+    // attach vertex, fragment shader to program
     glAttachShader(program, vs);
     glAttachShader(program, fs);
 
     glLinkProgram(program);
 
+    // check if the program created successfully
     glGetProgramiv(program, GL_LINK_STATUS, &status);
 
     if (status == GL_FALSE) {
@@ -164,6 +165,7 @@ static unsigned int add_obj(unsigned int program, const char *filename, const ch
     std::vector<tinyobj::shape_t> shapes;
     std::vector<tinyobj::material_t> materials;
 
+    // load model
     std::string err = tinyobj::LoadObj(shapes, materials, filename);
 
     if (!err.empty() || shapes.size() == 0) {
@@ -171,27 +173,32 @@ static unsigned int add_obj(unsigned int program, const char *filename, const ch
         exit(1);
     }
 
+    new_node.indices = (unsigned int) shapes[0].mesh.indices.size();
+    new_node.program = program;
+
+    // get the vertex array index
     glGenVertexArrays(1, &new_node.vao);
-    glGenBuffers(4, new_node.vbo);
+    glGenBuffers(sizeof(new_node.vbo) / sizeof(new_node.vbo[0]), new_node.vbo);
     glGenTextures(1, &new_node.texture);
 
     glBindVertexArray(new_node.vao);
 
-    // Upload position array
+    // upload position array
     glBindBuffer(GL_ARRAY_BUFFER, new_node.vbo[0]);
     glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat) * shapes[0].mesh.positions.size(),
                  shapes[0].mesh.positions.data(), GL_STATIC_DRAW);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);
-    if (shapes[0].mesh.texcoords.size() > 0) {
+    glEnableVertexAttribArray(0);                          // generic vertex attribute index
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0); // define an array of generic vertex attribute data
 
-        // Upload texCoord array
+    if (shapes[0].mesh.texcoords.size() > 0) {
+        // upload texCoord array
         glBindBuffer(GL_ARRAY_BUFFER, new_node.vbo[1]);
         glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat) * shapes[0].mesh.texcoords.size(),
                      shapes[0].mesh.texcoords.data(), GL_STATIC_DRAW);
         glEnableVertexAttribArray(1);
         glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, 0);
 
+        // setup texture
         glBindTexture(GL_TEXTURE_2D, new_node.texture);
         unsigned int width, height;
         unsigned short int bits;
@@ -205,25 +212,19 @@ static unsigned int add_obj(unsigned int program, const char *filename, const ch
     }
 
     if (shapes[0].mesh.normals.size() > 0) {
-        // Upload normal array
+        // upload normal array
         glBindBuffer(GL_ARRAY_BUFFER, new_node.vbo[2]);
         glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat) * shapes[0].mesh.normals.size(),
                      shapes[0].mesh.normals.data(), GL_STATIC_DRAW);
-
         glEnableVertexAttribArray(2);
         glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 0, 0);
     }
 
-    // Setup index buffer for glDrawElements
+    // setup index buffer for glDrawElements
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, new_node.vbo[3]);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(GLuint) * shapes[0].mesh.indices.size(),
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(GLuint) * new_node.indices,
                  shapes[0].mesh.indices.data(), GL_STATIC_DRAW);
-
-    indicesCount.push_back(shapes[0].mesh.indices.size());
-
     glBindVertexArray(0);
-
-    new_node.program = program;
 
     objects.push_back(new_node);
     return (unsigned int) (objects.size() - 1);
@@ -233,8 +234,8 @@ static void releaseObjects() {
     for (int i = 0; i < objects.size(); i++) {
         glDeleteVertexArrays(1, &objects[i].vao);
         glDeleteTextures(1, &objects[i].texture);
-        glDeleteBuffers(4, objects[i].vbo);
-        // release gl program
+        // release buffer and gl program
+        glDeleteBuffers(sizeof(objects[i].vbo) / (objects[i].vbo[0]), objects[i].vbo);
         glDeleteProgram(objects[i].program);
     }
 }
@@ -256,9 +257,10 @@ static void render() {
     for (int i = 0; i < objects.size(); i++) {
         glUseProgram(objects[i].program);
         glBindVertexArray(objects[i].vao);
+        // bind texture
         glBindTexture(GL_TEXTURE_2D, objects[i].texture);
-        // you should send some data to shader here
-        glDrawElements(GL_TRIANGLES, indicesCount[i], GL_UNSIGNED_INT, nullptr);
+        glDrawElements(GL_TRIANGLES, objects[i].indices, GL_UNSIGNED_INT, nullptr);
+        // send newly calculated vp to shader
         setUniformMat4(objects[i].program, "vp", objects[i].model);
     }
     glBindVertexArray(0);
@@ -276,25 +278,38 @@ glm::mat4 buildTransform(object_struct obj) {
 void rotateObject() {
     static float angle = 0;
     angle += 0.2f;
-    if (angle == 360) angle = 0;
-    float orbit = glm::radians(angle * 3);
+
+    float sun_angle = angle / 8;
+    float earth_angle = angle * 3;
+    float moon_angle = earth_angle * (30.0f / 27);
+
+    float earth_orbit = 3 * glm::radians(angle);
+    const int earth_orbit_x = 30;
+    const int earth_orbit_y = 50;
+    float moon_orbit = 6 * glm::radians(angle);
+    const int moon_orbit_x = 10;
+    const int moon_orbit_y = 8;
 
     // sun
-    objects[sun_index].rotation = glm::rotate(glm::mat4(), angle / 8, glm::vec3(0.0f, 0.0f, 1.0f));
+    objects[sun_index].rotation = glm::rotate(glm::mat4(), sun_angle, glm::vec3(0.0f, 0.0f, 1.0f));
     objects[sun_index].model = buildTransform(objects[sun_index]);
 
     // earth
-    objects[earth_index].translation =
-            glm::translate(glm::mat4(), glm::vec3(cos(orbit) * 30, 0.0f, sin(-orbit) * 50));
-    objects[earth_index].rotation = glm::rotate(glm::mat4(), angle * 3, glm::vec3(0.0f, 0.0f, 1.0f));
+    objects[earth_index].translation = glm::translate(glm::mat4(),
+                                                      glm::vec3(cos(earth_orbit) * earth_orbit_x, 0.0f,
+                                                                sin(-earth_orbit) * earth_orbit_y));
+    objects[earth_index].rotation = glm::rotate(glm::mat4(), earth_angle, glm::vec3(0.0f, 0.0f, 1.0f));
     objects[earth_index].model = buildTransform(objects[earth_index]);
 
     // moon
     objects[moon_index].origin = objects[earth_index].translation; // set earth position as origin
-    objects[moon_index].translation =
-            glm::translate(glm::mat4(), glm::vec3(cos(orbit * 3) * 10, 0.0f, sin(-orbit * 3) * 8));
-    objects[moon_index].rotation = glm::rotate(glm::mat4(), angle * 3 * (30.0f / 27), glm::vec3(0.0f, 0.0f, 1.0f));
+    objects[moon_index].translation = glm::translate(glm::mat4(),
+                                                     glm::vec3(cos(moon_orbit) * moon_orbit_x, 0.0f,
+                                                               sin(-moon_orbit) * moon_orbit_y));
+    objects[moon_index].rotation = glm::rotate(glm::mat4(), moon_angle, glm::vec3(0.0f, 0.0f, 1.0f));
     objects[moon_index].model = buildTransform(objects[moon_index]);
+
+    if (angle >= 360) angle = 0;
 }
 
 // initial objects
@@ -317,7 +332,7 @@ void setupObjects() {
     objects[sun_index].origin = glm::translate(glm::mat4(), glm::vec3(0.0f, 0.0f, 0.0f));
 
     // base transform: bloom
-    objects[bloom_index].base_model = glm::scale(glm::mat4(), glm::vec3(0.4f, 0.5f, 0.0f));
+    objects[bloom_index].base_model = glm::scale(glm::mat4(), glm::vec3(0.4f, 0.5f, 0.0f)); // resize bloom: x, y, z
     objects[bloom_index].origin = objects[sun_index].origin;
     objects[bloom_index].model = buildTransform(objects[bloom_index]);
 
@@ -350,23 +365,24 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
-    // Make our window context the main context on current thread
+    // make our window context the main context on current thread
     glfwMakeContextCurrent(window);
 
-    // This line MUST put below glfwMakeContextCurrent
+    // this line MUST put below glfwMakeContextCurrent
     glewExperimental = GL_TRUE;
     glewInit();
 
-    // Enable vsync
+    // enable vsync
     glfwSwapInterval(1);
 
-    // Setup input callback
+    // setup input callback
     glfwSetKeyCallback(window, key_callback);
 
-    // Alpha blending
+    // alpha blending
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
+    // depth comparisons and update the depth buffer
     glEnable(GL_DEPTH_TEST);
     glCullFace(GL_BACK);
 
@@ -376,7 +392,9 @@ int main(int argc, char *argv[]) {
     float last;
     last = (float) glfwGetTime();
     int fps = 0;
-    while (!glfwWindowShouldClose(window)) {//sun_program will keep draw here until you close the window
+
+    // gl program will keep draw here until you close the window
+    while (!glfwWindowShouldClose(window)) {
         render();
         glfwSwapBuffers(window);
         glfwPollEvents();
